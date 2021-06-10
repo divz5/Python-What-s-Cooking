@@ -1,0 +1,311 @@
+#Import Packages
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+
+from sklearn.preprocessing import MinMaxScaler
+
+from sklearn.model_selection import cross_val_score, GridSearchCV
+
+from sklearn.metrics import confusion_matrix, classification_report
+
+#Load Data
+
+train = pd.read_json('../input/whats-cooking-kernels-only/train.json')
+test  = pd.read_json('../input/whats-cooking-kernels-only/test.json')
+train.shape
+(39774, 3)
+
+test.shape
+(9944, 2)
+
+train.head()
+id	cuisine	ingredients
+0	10259	greek	[romaine lettuce, black olives, grape tomatoes...
+1	25693	southern_us	[plain flour, ground pepper, salt, tomatoes, g...
+2	20130	filipino	[eggs, pepper, salt, mayonaise, cooking oil, g...
+3	22213	indian	[water, vegetable oil, wheat, salt]
+4	13162	indian	[black pepper, shallots, cornflour, cayenne pe...
+
+test.head()
+id	ingredients
+0	18009	[baking powder, eggs, all-purpose flour, raisi...
+1	28583	[sugar, egg yolks, corn starch, cream of tarta...
+2	41580	[sausage links, fennel bulb, fronds, olive oil...
+3	29752	[meat cuts, file powder, smoked sausage, okra,...
+4	35687	[ground black pepper, salt, sausage casings, l...
+
+train.isna().sum()
+id             0
+cuisine        0
+ingredients    0
+dtype: int64
+
+#Preprocessing
+
+uniq_cuis = train.cuisine.unique()
+print(list(uniq_cuis))
+['greek', 'southern_us', 'filipino', 'indian', 'jamaican', 'spanish', 'italian', 'mexican', 'chinese', 'british', 'thai', 'vietnamese', 'cajun_creole', 'brazilian', 'french', 'japanese', 'irish', 'korean', 'moroccan', 'russian']
+
+len(uniq_cuis)
+20
+
+uniq_ing = train.ingredients.explode().unique()
+print(list(uniq_ing[:20]))
+['romaine lettuce', 'black olives', 'grape tomatoes', 'garlic', 'pepper', 'purple onion', 'seasoning', 'garbanzo beans', 'feta cheese crumbles', 'plain flour', 'ground pepper', 'salt', 'tomatoes', 'ground black pepper', 'thyme', 'eggs', 'green tomatoes', 'yellow corn meal', 'milk', 'vegetable oil']
+
+len(uniq_ing)
+6714
+
+%%time
+for u in uniq_ing:
+        train[u] = train.ingredients.map(lambda x : 1 if u in x else 0)
+CPU times: user 4min 9s, sys: 28.5 s, total: 4min 38s
+Wall time: 4min 38s
+
+train.head()
+id	cuisine	ingredients	romaine lettuce	black olives	grape tomatoes	garlic	pepper	purple onion	seasoning	...	Oscar Mayer Cotto Salami	Challenge Butter	orange glaze	cholesterol free egg substitute	ciabatta loaf	Lipton® Iced Tea Brew Family Size Tea Bags	Hidden Valley® Greek Yogurt Original Ranch® Dip Mix	lop chong	tomato garlic pasta sauce	crushed cheese crackers
+0	10259	greek	[romaine lettuce, black olives, grape tomatoes...	1	1	1	1	1	1	1	...	0	0	0	0	0	0	0	0	0	0
+1	25693	southern_us	[plain flour, ground pepper, salt, tomatoes, g...	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+2	20130	filipino	[eggs, pepper, salt, mayonaise, cooking oil, g...	0	0	0	0	1	0	0	...	0	0	0	0	0	0	0	0	0	0
+3	22213	indian	[water, vegetable oil, wheat, salt]	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+4	13162	indian	[black pepper, shallots, cornflour, cayenne pe...	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+5 rows × 6717 columns
+
+%%time
+for u in uniq_ing:
+        test[u] = test.ingredients.map(lambda x : 1 if u in x else 0)
+CPU times: user 1min 40s, sys: 6.77 s, total: 1min 47s
+Wall time: 1min 47s
+
+test.head()
+id	ingredients	romaine lettuce	black olives	grape tomatoes	garlic	pepper	purple onion	seasoning	garbanzo beans	...	Oscar Mayer Cotto Salami	Challenge Butter	orange glaze	cholesterol free egg substitute	ciabatta loaf	Lipton® Iced Tea Brew Family Size Tea Bags	Hidden Valley® Greek Yogurt Original Ranch® Dip Mix	lop chong	tomato garlic pasta sauce	crushed cheese crackers
+0	18009	[baking powder, eggs, all-purpose flour, raisi...	0	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+1	28583	[sugar, egg yolks, corn starch, cream of tarta...	0	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+2	41580	[sausage links, fennel bulb, fronds, olive oil...	0	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+3	29752	[meat cuts, file powder, smoked sausage, okra,...	0	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+4	35687	[ground black pepper, salt, sausage casings, l...	0	0	0	0	0	0	0	0	...	0	0	0	0	0	0	0	0	0	0
+5 rows × 6716 columns
+
+ingredient_lookup = {}
+
+for ing in range(len(uniq_ing)):
+    ingredient_lookup[uniq_ing[ing]] = ing
+%%time
+
+rows = []
+cols = []
+vals = []
+
+for i, recipe in train.iterrows():
+    for ingr in recipe['ingredients']:
+        c = ingredient_lookup[ingr]
+        rows.append(i)
+        cols.append(c)
+        vals.append(1)
+CPU times: user 37 s, sys: 4.98 s, total: 42 s
+Wall time: 40.8 s
+
+from scipy import sparse
+
+X_train = sparse.coo_matrix((vals, (rows, cols)))
+y_train = train.iloc[:,1].copy()
+print(X_train.shape)
+(39774, 6714)
+
+%%time
+row = [0]
+col = [6713]
+val = [0]
+
+new_ingr = []
+
+for i, recipe in test.iterrows():
+    for ingr in recipe['ingredients']:
+        
+        if ingr in ingredient_lookup.keys():
+            c = ingredient_lookup[ingr]
+            row.append(i)
+            col.append(c)
+            val.append(1)
+        else:
+            new_ingr.append(ingr) 
+CPU times: user 8.86 s, sys: 1.17 s, total: 10 s
+Wall time: 9.83 s
+
+X_test = sparse.coo_matrix((val, (row, col)))
+y_test = test.iloc[:,1].copy()
+
+print(X_test.shape)
+(9944, 6714)
+print(len(new_ingr))
+469
+
+#Logistic Regression
+
+%%time
+lr_mod = LogisticRegression(solver='liblinear')
+
+lr_param_grid = {
+    #'penalty': ['l1', 'l2'],
+    'C': [1]
+}
+
+lr_grid = GridSearchCV(lr_mod, lr_param_grid,n_jobs=-1,scoring='accuracy', cv=10, refit='True')
+lr_grid.fit(X_train, y_train)
+
+lr_gs_res = lr_grid.cv_results_
+
+print(lr_gs_res.keys())
+dict_keys(['mean_fit_time', 'std_fit_time', 'mean_score_time', 'std_score_time', 'param_C', 'params', 'split0_test_score', 'split1_test_score', 'split2_test_score', 'split3_test_score', 'split4_test_score', 'split5_test_score', 'split6_test_score', 'split7_test_score', 'split8_test_score', 'split9_test_score', 'mean_test_score', 'std_test_score', 'rank_test_score'])
+CPU times: user 10 s, sys: 160 ms, total: 10.2 s
+Wall time: 55 s
+
+for k, v in lr_gs_res.items():
+    print(f'{k:<20}{v}')
+mean_fit_time       [15.49980819]
+std_fit_time        [3.49691712]
+mean_score_time     [0.01370451]
+std_score_time      [0.00218353]
+param_C             [1]
+params              [{'C': 1}]
+split0_test_score   [0.78154852]
+split1_test_score   [0.7817999]
+split2_test_score   [0.79311212]
+split3_test_score   [0.78506787]
+split4_test_score   [0.7925572]
+split5_test_score   [0.77897913]
+split6_test_score   [0.76967563]
+split7_test_score   [0.78526528]
+split8_test_score   [0.7837566]
+split9_test_score   [0.79155142]
+mean_test_score     [0.78433137]
+std_test_score      [0.00675448]
+rank_test_score     [1]
+print(lr_gs_res['mean_test_score'])
+[0.78433137]
+grid = lr_grid
+lr_model = grid.best_estimator_
+
+print('Best Parameters:', grid.best_params_)
+print('Best CV Score:  ', grid.best_score_, '\n')
+print('Training Acc:   ', grid.best_estimator_.score(X_train, y_train))
+print()
+
+cv_res = grid.cv_results_
+
+for params, score in zip(cv_res['params'], cv_res['mean_test_score']):
+    print(f'{str(params):<20} {score:.8f}')
+Best Parameters: {'C': 1}
+Best CV Score:   0.7843313671509622 
+
+Training Acc:    0.8683562126011968
+
+{'C': 1}             0.78433137
+{'C': 0.001} 0.49429282
+{'C': 0.1} 0.74827758
+{'C': 0.01} 0.64479308
+{'C': 100} 0.74629133 , {'C': 0.1} 0.7482775835362029
+{'C': 1} 0.78433137
+{'C': 10} 0.77432496
+{'C': 20} 0.76688289
+{'C': 50} 0.75649901 , {'C': 1} 0.7843313671509622
+{'C': 5} 0.77985626
+{'C': 7} 0.77721628
+{'C': 3} 0.78309952 , {'C': 3} 0.7830995165388515
+
+#Decision Trees: Hyper-Parameter Tuning
+
+%%time
+
+dtree = DecisionTreeClassifier(random_state=1)
+
+dt_param_grid = {
+    'max_depth': [30],
+    'min_samples_leaf': [1]
+}
+
+dt_grid_search = GridSearchCV(dtree, dt_param_grid, cv=5, refit='True')
+dt_grid_search.fit(X_train, y_train)
+
+dt_gs_res = dt_grid_search.cv_results_
+CPU times: user 13.7 s, sys: 2.58 ms, total: 13.7 s
+Wall time: 13.7 s
+
+for params, score in zip(dt_gs_res['params'], dt_gs_res['mean_test_score']):
+    print(params, '\t', score)
+{'max_depth': 30, 'min_samples_leaf': 1} 	 0.512369866518781
+
+print(dt_grid_search.best_score_)
+print(dt_grid_search.best_params_)
+0.512369866518781
+{'max_depth': 30, 'min_samples_leaf': 1}
+'max_depth': [12, 14, 16, 18,20, 30 ]
+'min_samples_leaf': [2,32,54,104] , 0.506084432374905 {'max_depth': 30, 'min_samples_leaf': 2}
+'max_depth': [12, 14, 16, 18,20, 30 ],
+'min_samples_leaf': [0.1,0.001,1,0.01] , 0.512369866518781 {'max_depth': 30, 'min_samples_leaf': 1}
+'max_depth': [12, 14, 16, 18,20, 30 ],
+'min_samples_leaf': [10,15,20,35] , 0.5089756261925303 {'max_depth': 30, 'min_samples_leaf': 10}
+
+#Random Forest Model
+
+rfc = RandomForestClassifier(n_jobs=-1,n_estimators=50) 
+
+rf_param_grid = { 
+    'max_depth': [250],
+    'max_features': [85],
+    'min_samples_leaf': [1]
+}
+
+rf_cv = GridSearchCV(rfc, rf_param_grid, cv= 5, refit='True')
+rf_cv.fit(X_train, y_train)
+
+rf_res = rf_cv.cv_results_
+for params, score in zip(rf_res['params'], rf_res['mean_test_score']):
+    print(params, '\t', score)
+{'max_depth': 250, 'max_features': 85, 'min_samples_leaf': 1} 	 0.711997812057925
+print(rf_cv.best_score_)
+print(rf_cv.best_params_)
+0.711997812057925
+{'max_depth': 250, 'max_features': 85, 'min_samples_leaf': 1}
+'max_depth': [80, 90, 100, 110],
+'max_features': [2, 3],
+'min_samples_leaf': [3, 4, 5] , 0.20666754959812134 {'max_depth': 100, 'max_features': 3, 'min_samples_leaf': 3}
+'max_depth': [10,20,30,50],
+'max_features': [80,90],
+'min_samples_leaf': [1,3] , 0.6396138386546022 {'max_depth': 50, 'max_features': 90, 'min_samples_leaf': 1}
+'max_depth': [100],
+'max_features': [80,90,100],
+'min_samples_leaf': [1] ,0.6947000659195781 {'max_depth': 100, 'max_features': 90, 'min_samples_leaf': 1}
+'max_depth': [250],
+'max_features': [80,85,87],
+'min_samples_leaf': [1] , 0.711469911766384 {'max_depth': 250, 'max_features': 85, 'min_samples_leaf': 1}
+
+#Generate Test Predictions
+
+test_pred = lr_model.predict(X_test)
+print(test_pred[:30])
+['british' 'southern_us' 'italian' 'cajun_creole' 'italian' 'southern_us'
+ 'spanish' 'chinese' 'mexican' 'british' 'italian' 'greek' 'indian'
+ 'italian' 'southern_us' 'french' 'mexican' 'southern_us' 'mexican'
+ 'southern_us' 'japanese' 'indian' 'spanish' 'vietnamese' 'italian'
+ 'southern_us' 'vietnamese' 'korean' 'italian' 'italian']
+
+submission = pd.DataFrame({
+    'id' : test.id,
+    'cuisine' : test_pred
+})
+
+submission.head()
+id	cuisine
+0	18009	british
+1	28583	southern_us
+2	41580	italian
+3	29752	cajun_creole
+4	35687	italian
+submission.to_csv('submission.csv', index=False)
